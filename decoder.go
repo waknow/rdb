@@ -10,8 +10,13 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/cupcake/rdb/crc64"
+	"github.com/waknow/rdb/crc64"
 )
+
+// Info about key's type and encoding
+type Info struct {
+	Enconding ValueType
+}
 
 // A Decoder must be implemented to parse a RDB file.
 type Decoder interface {
@@ -25,17 +30,17 @@ type Decoder interface {
 	// ResizeDB hint
 	ResizeDatabase(dbSize, expiresSize uint32)
 	// Set is called once for each string key.
-	Set(key, value []byte, expiry int64)
+	Set(key, value []byte, expiry int64, info Info)
 	// StartHash is called at the beginning of a hash.
 	// Hset will be called exactly length times before EndHash.
-	StartHash(key []byte, length, expiry int64)
+	StartHash(key []byte, length, expiry int64, info Info)
 	// Hset is called once for each field=value pair in a hash.
 	Hset(key, field, value []byte)
 	// EndHash is called when there are no more fields in a hash.
 	EndHash(key []byte)
 	// StartSet is called at the beginning of a set.
 	// Sadd will be called exactly cardinality times before EndSet.
-	StartSet(key []byte, cardinality, expiry int64)
+	StartSet(key []byte, cardinality, expiry int64, info Info)
 	// Sadd is called once for each member of a set.
 	Sadd(key, member []byte)
 	// EndSet is called when there are no more fields in a set.
@@ -43,14 +48,14 @@ type Decoder interface {
 	// StartList is called at the beginning of a list.
 	// Rpush will be called exactly length times before EndList.
 	// If length of the list is not known, then length is -1
-	StartList(key []byte, length, expiry int64)
+	StartList(key []byte, length, expiry int64, info Info)
 	// Rpush is called once for each value in a list.
 	Rpush(key, value []byte)
 	// EndList is called when there are no more values in a list.
 	EndList(key []byte)
 	// StartZSet is called at the beginning of a sorted set.
 	// Zadd will be called exactly cardinality times before EndZSet.
-	StartZSet(key []byte, cardinality, expiry int64)
+	StartZSet(key []byte, cardinality, expiry int64, info Info)
 	// Zadd is called once for each member of a sorted set.
 	Zadd(key []byte, score float64, member []byte)
 	// EndZSet is called when there are no more members in a sorted set.
@@ -230,13 +235,13 @@ func (d *decode) readObject(key []byte, typ ValueType, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		d.event.Set(key, value, expiry)
+		d.event.Set(key, value, expiry, Info{Enconding: TypeString})
 	case TypeList:
 		length, _, err := d.readLength()
 		if err != nil {
 			return err
 		}
-		d.event.StartList(key, int64(length), expiry)
+		d.event.StartList(key, int64(length), expiry, Info{Enconding: TypeList})
 		for i := uint32(0); i < length; i++ {
 			value, err := d.readString()
 			if err != nil {
@@ -250,7 +255,7 @@ func (d *decode) readObject(key []byte, typ ValueType, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		d.event.StartList(key, int64(-1), expiry)
+		d.event.StartList(key, int64(-1), expiry, Info{Enconding: TypeListQuicklist})
 		for i := uint32(0); i < length; i++ {
 			d.readZiplist(key, 0, false)
 		}
@@ -260,7 +265,7 @@ func (d *decode) readObject(key []byte, typ ValueType, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		d.event.StartSet(key, int64(cardinality), expiry)
+		d.event.StartSet(key, int64(cardinality), expiry, Info{Enconding: TypeSet})
 		for i := uint32(0); i < cardinality; i++ {
 			member, err := d.readString()
 			if err != nil {
@@ -274,7 +279,7 @@ func (d *decode) readObject(key []byte, typ ValueType, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		d.event.StartZSet(key, int64(cardinality), expiry)
+		d.event.StartZSet(key, int64(cardinality), expiry, Info{Enconding: TypeZSet})
 		for i := uint32(0); i < cardinality; i++ {
 			member, err := d.readString()
 			if err != nil {
@@ -292,7 +297,7 @@ func (d *decode) readObject(key []byte, typ ValueType, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		d.event.StartHash(key, int64(length), expiry)
+		d.event.StartHash(key, int64(length), expiry, Info{Enconding: TypeHash})
 		for i := uint32(0); i < length; i++ {
 			field, err := d.readString()
 			if err != nil {
@@ -341,7 +346,7 @@ func (d *decode) readZipmap(key []byte, expiry int64) error {
 	} else {
 		length = int(lenByte)
 	}
-	d.event.StartHash(key, int64(length), expiry)
+	d.event.StartHash(key, int64(length), expiry, Info{Enconding: TypeHashZipmap})
 	for i := 0; i < length; i++ {
 		field, err := readZipmapItem(buf, false)
 		if err != nil {
@@ -428,7 +433,7 @@ func (d *decode) readZiplist(key []byte, expiry int64, addListEvents bool) error
 		return err
 	}
 	if addListEvents {
-		d.event.StartList(key, length, expiry)
+		d.event.StartList(key, length, expiry, Info{Enconding: TypeListZiplist})
 	}
 	for i := int64(0); i < length; i++ {
 		entry, err := readZiplistEntry(buf)
@@ -454,7 +459,7 @@ func (d *decode) readZiplistZset(key []byte, expiry int64) error {
 		return err
 	}
 	cardinality /= 2
-	d.event.StartZSet(key, cardinality, expiry)
+	d.event.StartZSet(key, cardinality, expiry, Info{Enconding: TypeZSetZiplist})
 	for i := int64(0); i < cardinality; i++ {
 		member, err := readZiplistEntry(buf)
 		if err != nil {
@@ -485,7 +490,7 @@ func (d *decode) readZiplistHash(key []byte, expiry int64) error {
 		return err
 	}
 	length /= 2
-	d.event.StartHash(key, length, expiry)
+	d.event.StartHash(key, length, expiry, Info{Enconding: TypeHashZiplist})
 	for i := int64(0); i < length; i++ {
 		field, err := readZiplistEntry(buf)
 		if err != nil {
@@ -595,7 +600,7 @@ func (d *decode) readIntset(key []byte, expiry int64) error {
 	}
 	cardinality := binary.LittleEndian.Uint32(lenBytes)
 
-	d.event.StartSet(key, int64(cardinality), expiry)
+	d.event.StartSet(key, int64(cardinality), expiry, Info{Enconding: TypeSetIntset})
 	for i := uint32(0); i < cardinality; i++ {
 		intBytes, err := buf.Slice(int(intSize))
 		if err != nil {

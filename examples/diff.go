@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cupcake/rdb"
-	"github.com/cupcake/rdb/nopdecoder"
+	"github.com/waknow/rdb"
+	"github.com/waknow/rdb/nopdecoder"
 )
 
 type decoder struct {
@@ -20,7 +20,7 @@ func (p *decoder) StartDatabase(n int) {
 	p.db = n
 }
 
-func (p *decoder) Set(key, value []byte, expiry int64) {
+func (p *decoder) Set(key, value []byte, expiry int64, info rdb.Info) {
 	fmt.Printf("db=%d %q -> %q\n", p.db, key, value)
 }
 
@@ -32,7 +32,7 @@ func (p *decoder) Sadd(key, member []byte) {
 	fmt.Printf("db=%d %q { %q }\n", p.db, key, member)
 }
 
-func (p *decoder) StartList(key []byte, length, expiry int64) {
+func (p *decoder) StartList(key []byte, length, expiry int64, info rdb.Info) {
 	p.i = 0
 }
 
@@ -41,7 +41,7 @@ func (p *decoder) Rpush(key, value []byte) {
 	p.i++
 }
 
-func (p *decoder) StartZSet(key []byte, cardinality, expiry int64) {
+func (p *decoder) StartZSet(key []byte, cardinality, expiry int64, info rdb.Info) {
 	p.i = 0
 }
 
